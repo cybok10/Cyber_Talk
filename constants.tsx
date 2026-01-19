@@ -14,3 +14,4 @@ export const MOCK_PEER: User = {
   avatar: 'https://picsum.photos/seed/bot/200',
   publicKey: 'MOCK-PUB-KEY-CIPHERBOT-STUB',
 };
+//

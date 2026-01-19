@@ -166,3 +166,4 @@ const Sidebar: React.FC<SidebarProps> = ({ user, activeRoom, peer, isBotEnabled,
 };
 
 export default Sidebar;
+//

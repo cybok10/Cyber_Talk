@@ -21,3 +21,4 @@ export async function getGeminiResponse(prompt: string) {
     return "Error communicating with the security bot. Please check your connection.";
   }
 }
+///
