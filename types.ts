@@ -36,6 +36,7 @@ export interface ChatState {
   user: User | null;
   activeRoom: string;
   messages: Message[];
+  typingUsers: string[]; // List of usernames currently typing
   isAuthenticated: boolean;
   connectionStatus: {
     status: 'disconnected' | 'connecting' | 'host' | 'client' | 'error';

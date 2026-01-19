@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, Message, ChatState, ReactionPayload, Attachment } from './types.ts';
 import { socket } from './services/socketService.ts';
 import { getGeminiResponse } from './services/geminiService.ts';
@@ -15,9 +15,10 @@ const App: React.FC = () => {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // We restore the user and messages, but reset connection status
+        // We restore the user and messages, but reset connection status and typing
         return {
           ...parsed,
+          typingUsers: [],
           connectionStatus: { status: 'disconnected', label: 'Reconnecting...' }
         };
       }
@@ -29,12 +30,14 @@ const App: React.FC = () => {
       user: null,
       activeRoom: 'Global',
       messages: [],
+      typingUsers: [],
       isAuthenticated: false,
       connectionStatus: { status: 'disconnected', label: 'Offline' }
     };
   });
 
   const [isBotEnabled, setIsBotEnabled] = useState(false);
+  const typingTimeouts = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
 
   // 1. Persist state to local storage on change
   useEffect(() => {
@@ -61,7 +64,6 @@ const App: React.FC = () => {
   // 3. Handle Logout
   const handleLogout = () => {
     localStorage.removeItem(STORAGE_KEY);
-    // Reload to clear memory and socket state completely
     window.location.reload();
   };
 
@@ -71,9 +73,12 @@ const App: React.FC = () => {
       if (msg.roomId !== state.activeRoom) return;
 
       setState(prev => {
+        // Remove user from typing list if they sent a message
+        const newTyping = prev.typingUsers.filter(u => u !== msg.senderName);
+        
         // Deduplication
-        if (prev.messages.find(m => m.id === msg.id)) return prev;
-        return { ...prev, messages: [...prev.messages, msg] };
+        if (prev.messages.find(m => m.id === msg.id)) return { ...prev, typingUsers: newTyping };
+        return { ...prev, messages: [...prev.messages, msg], typingUsers: newTyping };
       });
     };
 
@@ -103,6 +108,28 @@ const App: React.FC = () => {
       });
     };
 
+    // Typing Listener
+    const handleTypingEvent = ({ username, isTyping }: { username: string, isTyping: boolean }) => {
+      if (username === state.user?.username) return; // Ignore self
+
+      setState(prev => {
+        const others = prev.typingUsers.filter(u => u !== username);
+        if (isTyping) {
+            // Clear existing timeout to prevent premature removal
+            if (typingTimeouts.current[username]) clearTimeout(typingTimeouts.current[username]);
+            
+            // Auto-remove after 3 seconds if no 'stop' event received
+            typingTimeouts.current[username] = setTimeout(() => {
+                setState(p => ({ ...p, typingUsers: p.typingUsers.filter(u => u !== username) }));
+            }, 3000);
+
+            return { ...prev, typingUsers: [...others, username] };
+        } else {
+            return { ...prev, typingUsers: others };
+        }
+      });
+    };
+
     // Status Listener
     const handleStatus = (status: any) => {
       setState(prev => ({ ...prev, connectionStatus: status }));
@@ -110,20 +137,20 @@ const App: React.FC = () => {
 
     socket.on('message', handleMessage);
     socket.on('reaction', handleReactionEvent);
+    socket.on('typing', handleTypingEvent);
     socket.on('status', handleStatus);
 
     return () => {
       socket.off('message', handleMessage);
       socket.off('reaction', handleReactionEvent);
+      socket.off('typing', handleTypingEvent);
       socket.off('status', handleStatus);
     };
-  }, [state.activeRoom]);
+  }, [state.activeRoom, state.user]);
 
   const handleJoin = (username: string, roomId: string) => {
-    // 1. Initialize P2P Connection
     socket.connect(roomId);
 
-    // 2. Create local User State
     const newUser: User = {
       id: `u-${Math.random().toString(36).substr(2, 9)}`,
       username,
@@ -139,7 +166,6 @@ const App: React.FC = () => {
       connectionStatus: { status: 'connecting', label: 'Initializing...' }
     }));
 
-    // 3. Emit Join Message
     const joinMsg: Message = {
       id: `sys-${Date.now()}`,
       roomId: roomId,
@@ -190,21 +216,20 @@ const App: React.FC = () => {
 
   const handleAddReaction = (messageId: string, emoji: string) => {
     if (!state.user) return;
-    
-    const payload: ReactionPayload = {
-      messageId,
-      emoji,
-      userId: state.user.id
-    };
-
+    const payload: ReactionPayload = { messageId, emoji, userId: state.user.id };
     socket.emit('reaction', payload);
+  };
+
+  const handleTyping = (isTyping: boolean) => {
+    if (!state.user) return;
+    socket.emit('typing', { username: state.user.username, isTyping });
   };
 
   if (!state.isAuthenticated) {
     return <Auth onJoin={handleJoin} />;
   }
 
-  // Find a peer from messages
+  // Identify Peer (Last person who isn't us or bot)
   const lastOtherMessage = [...state.messages].reverse().find(m => m.senderId !== state.user?.id && m.type === 'text' && m.senderId !== 'bot');
   const mockPeer: User | null = lastOtherMessage ? {
     id: lastOtherMessage.senderId,
@@ -230,10 +255,13 @@ const App: React.FC = () => {
           messages={state.messages}
           currentUser={state.user!}
           activeRoom={state.activeRoom}
+          peer={mockPeer}
           onSendMessage={handleSendMessage}
           isBotEnabled={isBotEnabled}
           onToggleBot={() => setIsBotEnabled(!isBotEnabled)}
           onAddReaction={handleAddReaction}
+          onTyping={handleTyping}
+          typingUsers={state.typingUsers}
         />
       </div>
     </div>
