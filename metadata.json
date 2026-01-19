@@ -1,0 +1,8 @@
+{
+  "name": "CipherTalk E2EE",
+  "description": "A production-grade, end-to-end encrypted chat application showcasing RSA-2048 key exchange and AES-256-GCM message encryption with real-time simulated sockets.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
