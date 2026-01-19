@@ -24,12 +24,17 @@ export interface Message {
   type: 'text' | 'system';
   reactions?: { [emoji: string]: string[] }; // emoji -> array of userIds
   attachment?: Attachment;
+  isDeleted?: boolean; // New flag for soft deletion
 }
 
 export interface ReactionPayload {
   messageId: string;
   emoji: string;
   userId: string;
+}
+
+export interface DeletePayload {
+  messageIds: string[];
 }
 
 export interface ChatState {

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Message, User, Attachment } from '../types.ts';
+import { formatDate, isSameDay, getTypingString } from '../utils/formatters.ts';
 
 interface ChatWindowProps {
   messages: Message[];
@@ -12,40 +13,22 @@ interface ChatWindowProps {
   onAddReaction: (messageId: string, emoji: string) => void;
   onTyping: (isTyping: boolean) => void;
   typingUsers: string[];
+  onDeleteMessages: (ids: string[]) => void;
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 const MAX_FILE_SIZE = 1 * 1024 * 1024; // 1MB
 
-// Helper for date formatting
-const isSameDay = (ts1: number, ts2: number) => {
-  const d1 = new Date(ts1);
-  const d2 = new Date(ts2);
-  return d1.getDate() === d2.getDate() &&
-         d1.getMonth() === d2.getMonth() &&
-         d1.getFullYear() === d2.getFullYear();
-};
-
-const formatDate = (ts: number) => {
-  const d = new Date(ts);
-  const today = new Date();
-  if (isSameDay(ts, today.getTime())) return 'Today';
-  
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (isSameDay(ts, yesterday.getTime())) return 'Yesterday';
-
-  return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
-};
-
 const ChatWindow: React.FC<ChatWindowProps> = ({ 
   messages, currentUser, activeRoom, peer, 
   onSendMessage, isBotEnabled, onToggleBot, onAddReaction, 
-  onTyping, typingUsers 
+  onTyping, typingUsers, onDeleteMessages
 }) => {
   const [inputText, setInputText] = useState('');
   const [activeReactionId, setActiveReactionId] = useState<string | null>(null);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
+  
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -58,11 +41,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   }, [messages.length, messages[messages.length - 1]?.reactions, typingUsers.length]); 
 
-  // Outside click for reactions
+  // Outside click to clear state
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
         setActiveReactionId(null);
+        // We only clear selection if clicking outside the main message area to avoid accidental clears
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -128,8 +112,44 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const toggleReactionPicker = (msgId: string) => {
+  const toggleReactionPicker = (msgId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     setActiveReactionId(activeReactionId === msgId ? null : msgId);
+  };
+
+  const toggleMessageSelection = (msgId: string) => {
+    const newSet = new Set(selectedMessageIds);
+    if (newSet.has(msgId)) {
+      newSet.delete(msgId);
+    } else {
+      newSet.add(msgId);
+    }
+    setSelectedMessageIds(newSet);
+  };
+
+  const handleCopyMessages = () => {
+    const content = messages
+      .filter(m => selectedMessageIds.has(m.id) && !m.isDeleted && m.type === 'text')
+      .map(m => m.content)
+      .join('\n');
+    navigator.clipboard.writeText(content);
+    setSelectedMessageIds(new Set());
+  };
+
+  const handleDeleteSelected = () => {
+    if (window.confirm(`Delete ${selectedMessageIds.size} messages for everyone?`)) {
+      onDeleteMessages(Array.from(selectedMessageIds));
+      setSelectedMessageIds(new Set());
+    }
+  };
+
+  const handleForwardMessages = () => {
+    const content = messages
+      .filter(m => selectedMessageIds.has(m.id) && !m.isDeleted && m.type === 'text')
+      .map(m => `> ${m.senderName}: ${m.content}`)
+      .join('\n\n');
+    setInputText(prev => prev + (prev ? '\n' : '') + content);
+    setSelectedMessageIds(new Set());
   };
 
   const renderAttachment = (att: Attachment) => {
@@ -155,7 +175,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
              <div className="text-xs font-bold truncate">{att.name}</div>
              <div className="text-[10px] opacity-70">{(att.size / 1024).toFixed(1)} KB</div>
            </div>
-           <a href={att.data} download={att.name} className="w-8 h-8 flex items-center justify-center bg-white/20 rounded-full hover:bg-white/30 transition-colors">
+           <a href={att.data} download={att.name} onClick={e => e.stopPropagation()} className="w-8 h-8 flex items-center justify-center bg-white/20 rounded-full hover:bg-white/30 transition-colors">
              <i className="fas fa-download text-xs"></i>
            </a>
         </div>
@@ -163,43 +183,71 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   };
 
+  const isSelectionMode = selectedMessageIds.size > 0;
+
   return (
-    <div className="flex flex-col h-full max-w-4xl mx-auto w-full bg-white shadow-xl" ref={wrapperRef}>
-      {/* Enhanced Header */}
-      <header className="px-6 py-4 border-b flex items-center justify-between bg-white z-10">
-        <div className="flex items-center gap-3">
-          {peer ? (
-             <div className="relative">
-                <img src={peer.avatar} className="w-10 h-10 rounded-full bg-slate-100 object-cover border border-slate-200" alt={peer.username} />
-                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></div>
-             </div>
-          ) : (
-            <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-md shadow-indigo-200">
-              <i className="fas fa-hashtag"></i>
+    <div className="flex flex-col h-full max-w-4xl mx-auto w-full bg-white shadow-xl relative" ref={wrapperRef}>
+      {/* Enhanced Header with Selection Mode */}
+      <header className={`px-6 py-4 border-b flex items-center justify-between transition-colors z-20
+         ${isSelectionMode ? 'bg-indigo-600 text-white' : 'bg-white'}`}>
+        
+        {isSelectionMode ? (
+          <div className="flex items-center justify-between w-full animate-slide-in-bottom">
+            <div className="flex items-center gap-4">
+              <button onClick={() => setSelectedMessageIds(new Set())} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/20">
+                <i className="fas fa-times"></i>
+              </button>
+              <span className="font-bold text-lg">{selectedMessageIds.size} Selected</span>
             </div>
-          )}
-          
-          <div>
-            <h2 className="font-bold text-slate-800 leading-tight">
-                {peer ? peer.username : activeRoom}
-            </h2>
-            <div className="flex items-center gap-1.5">
-               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-               <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                 {peer ? 'End-to-End Encrypted' : 'Encrypted Group'}
-               </p>
+            <div className="flex items-center gap-2">
+              <button onClick={handleCopyMessages} className="p-2 hover:bg-white/20 rounded-lg" title="Copy">
+                <i className="fas fa-copy"></i>
+              </button>
+              <button onClick={handleForwardMessages} className="p-2 hover:bg-white/20 rounded-lg" title="Quote/Forward">
+                <i className="fas fa-quote-right"></i>
+              </button>
+              <button onClick={handleDeleteSelected} className="p-2 hover:bg-white/20 rounded-lg hover:text-red-200" title="Delete">
+                <i className="fas fa-trash"></i>
+              </button>
             </div>
           </div>
-        </div>
-        <button 
-          onClick={onToggleBot}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-            isBotEnabled ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-400'
-          }`}
-        >
-          <i className="fas fa-robot"></i>
-          {isBotEnabled ? 'Bot On' : 'Bot Off'}
-        </button>
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              {peer ? (
+                 <div className="relative">
+                    <img src={peer.avatar} className="w-10 h-10 rounded-full bg-slate-100 object-cover border border-slate-200" alt={peer.username} />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></div>
+                 </div>
+              ) : (
+                <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-md shadow-indigo-200">
+                  <i className="fas fa-hashtag"></i>
+                </div>
+              )}
+              
+              <div>
+                <h2 className="font-bold text-slate-800 leading-tight">
+                    {peer ? peer.username : activeRoom}
+                </h2>
+                <div className="flex items-center gap-1.5">
+                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                     {peer ? 'End-to-End Encrypted' : 'Encrypted Group'}
+                   </p>
+                </div>
+              </div>
+            </div>
+            <button 
+              onClick={onToggleBot}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
+                isBotEnabled ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-400'
+              }`}
+            >
+              <i className="fas fa-robot"></i>
+              {isBotEnabled ? 'Bot On' : 'Bot Off'}
+            </button>
+          </>
+        )}
       </header>
 
       {/* Messages */}
@@ -222,15 +270,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           const isOwn = msg.senderId === currentUser.id;
           const previousMsg = messages[index - 1];
           const nextMsg = messages[index + 1];
-          
-          const isSequence = previousMsg && previousMsg.senderId === msg.senderId && previousMsg.type !== 'system' && (msg.timestamp - previousMsg.timestamp < 300000); // 5 mins
-          const isLastInSequence = !nextMsg || nextMsg.senderId !== msg.senderId || nextMsg.type === 'system' || (nextMsg.timestamp - msg.timestamp >= 300000);
-          
+          const isSequence = previousMsg && previousMsg.senderId === msg.senderId && previousMsg.type !== 'system' && (msg.timestamp - previousMsg.timestamp < 300000); 
           const showDateSeparator = !previousMsg || !isSameDay(msg.timestamp, previousMsg.timestamp);
 
           const reactions = (msg.reactions || {}) as Record<string, string[]>;
           const hasReactions = Object.keys(reactions).length > 0;
           const hasAttachment = !!msg.attachment;
+          const isSelected = selectedMessageIds.has(msg.id);
 
           return (
             <React.Fragment key={msg.id}>
@@ -242,41 +288,64 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 </div>
               )}
 
-              <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} group relative animate-fade-in ${isSequence ? 'mt-1' : 'mt-4'}`}>
-                
-                {/* Sender Name (only if first in sequence and not own) */}
+              <div 
+                className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} group relative animate-fade-in ${isSequence ? 'mt-1' : 'mt-4'}
+                  ${isSelected ? 'opacity-100' : ''}`}
+                onClick={() => toggleMessageSelection(msg.id)}
+              >
+                {/* Sender Name */}
                 {!isOwn && !isSequence && (
                   <span className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">{msg.senderName}</span>
                 )}
                 
-                <div className="relative max-w-[80%] min-w-[120px]">
+                <div className={`relative max-w-[80%] min-w-[120px] transition-transform duration-200 ${isSelected ? 'scale-[1.02]' : ''}`}>
+                  
+                  {/* Selection Indicator */}
+                  {isSelected && (
+                    <div className={`absolute top-1/2 -translate-y-1/2 ${isOwn ? '-left-8' : '-right-8'} text-indigo-600`}>
+                      <i className="fas fa-check-circle text-lg"></i>
+                    </div>
+                  )}
+
                   {/* Message Bubble */}
-                  <div className={`px-4 py-2.5 shadow-sm relative text-sm
-                    ${isOwn 
-                      ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-sm' 
-                      : 'bg-white text-slate-700 border border-slate-200 rounded-2xl rounded-tl-sm'}
+                  <div className={`px-4 py-2.5 shadow-sm relative text-sm cursor-pointer transition-colors border
+                    ${msg.isDeleted 
+                        ? 'bg-slate-100 text-slate-400 border-slate-200 italic'
+                        : isOwn 
+                          ? `bg-indigo-600 text-white border-indigo-600 ${isSelected ? 'ring-2 ring-indigo-300 ring-offset-1' : ''}` 
+                          : `bg-white text-slate-700 border-slate-200 ${isSelected ? 'ring-2 ring-indigo-300 ring-offset-1' : ''}`
+                    }
+                    ${isOwn ? 'rounded-2xl rounded-tr-sm' : 'rounded-2xl rounded-tl-sm'}
                     ${isSequence && isOwn ? 'rounded-tr-2xl' : ''}
                     ${isSequence && !isOwn ? 'rounded-tl-2xl' : ''}
                   `}>
-                    {hasAttachment && renderAttachment(msg.attachment!)}
-                    {msg.content && <p className="leading-relaxed">{msg.content}</p>}
+                    {msg.isDeleted ? (
+                       <span className="flex items-center gap-2"><i className="fas fa-ban text-xs"></i> This message was deleted</span>
+                    ) : (
+                      <>
+                        {hasAttachment && renderAttachment(msg.attachment!)}
+                        {msg.content && <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>}
+                      </>
+                    )}
                     
-                    <div className={`text-[9px] mt-1 flex items-center gap-1 ${isOwn ? 'justify-end text-indigo-200' : 'justify-start text-slate-300'}`}>
+                    <div className={`text-[9px] mt-1 flex items-center gap-1 ${isOwn && !msg.isDeleted ? 'justify-end text-indigo-200' : 'justify-start text-slate-300'}`}>
                        {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                        {isOwn && <i className="fas fa-check-double"></i>}
                     </div>
                   </div>
 
-                  {/* Reaction Picker Button */}
-                  <button 
-                    onClick={() => toggleReactionPicker(msg.id)}
-                    className={`absolute top-1/2 -translate-y-1/2 ${isOwn ? '-left-8' : '-right-8'} 
-                      w-6 h-6 rounded-full bg-slate-100 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 
-                      flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 z-10
-                      ${activeReactionId === msg.id ? 'opacity-100 text-indigo-600 bg-indigo-50' : ''}`}
-                  >
-                    <i className="fas fa-smile text-xs"></i>
-                  </button>
+                  {/* Reaction Picker Button (Only show if not selected and not deleted) */}
+                  {!isSelected && !msg.isDeleted && (
+                    <button 
+                      onClick={(e) => toggleReactionPicker(msg.id, e)}
+                      className={`absolute top-1/2 -translate-y-1/2 ${isOwn ? '-left-8' : '-right-8'} 
+                        w-6 h-6 rounded-full bg-slate-100 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 
+                        flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 z-10
+                        ${activeReactionId === msg.id ? 'opacity-100 text-indigo-600 bg-indigo-50' : ''}`}
+                    >
+                      <i className="fas fa-smile text-xs"></i>
+                    </button>
+                  )}
 
                   {/* Reaction Picker Popover */}
                   {activeReactionId === msg.id && (
@@ -285,7 +354,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                       {REACTION_EMOJIS.map(emoji => (
                         <button
                           key={emoji}
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation();
                             onAddReaction(msg.id, emoji);
                             setActiveReactionId(null);
                           }}
@@ -299,14 +369,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 </div>
 
                 {/* Display Reactions */}
-                {hasReactions && (
+                {!msg.isDeleted && hasReactions && (
                   <div className={`flex flex-wrap gap-1 mt-1 ${isOwn ? 'justify-end' : 'justify-start'} max-w-[80%]`}>
                     {Object.entries(reactions).map(([emoji, users]) => {
                       const iReacted = users.includes(currentUser.id);
                       return (
                         <button 
                           key={emoji}
-                          onClick={() => onAddReaction(msg.id, emoji)}
+                          onClick={(e) => { e.stopPropagation(); onAddReaction(msg.id, emoji); }}
                           className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium transition-all shadow-sm
                             ${iReacted 
                               ? 'bg-indigo-50 border-indigo-200 text-indigo-600' 
@@ -324,16 +394,16 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           );
         })}
         
-        {/* Typing Indicator */}
+        {/* Advanced Typing Indicator */}
         {typingUsers.length > 0 && (
-           <div className="flex items-center gap-2 mt-4 animate-fade-in">
-              <div className="bg-slate-200 rounded-full px-3 py-2 flex gap-1">
-                 <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div>
-                 <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-75"></div>
-                 <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-150"></div>
+           <div className="flex items-center gap-3 mt-4 animate-fade-in pl-2">
+              <div className="bg-slate-200 rounded-full px-3 py-2 flex gap-1 items-center h-8">
+                 <div className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-[bounce_1s_infinite_0ms]"></div>
+                 <div className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-[bounce_1s_infinite_200ms]"></div>
+                 <div className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-[bounce_1s_infinite_400ms]"></div>
               </div>
-              <span className="text-xs text-slate-400 font-medium">
-                 {typingUsers.join(', ')} is typing...
+              <span className="text-xs text-slate-400 font-bold tracking-wide">
+                 {getTypingString(typingUsers)}
               </span>
            </div>
         )}
@@ -362,6 +432,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           placeholder="Type a message..."
           value={inputText}
           onChange={handleInputChange}
+          onFocus={() => setSelectedMessageIds(new Set())} 
         />
         <button 
           type="submit"
