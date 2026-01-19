@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Message, ChatState, ReactionPayload } from './types.ts';
+import { User, Message, ChatState, ReactionPayload, Attachment } from './types.ts';
 import { socket } from './services/socketService.ts';
 import { getGeminiResponse } from './services/geminiService.ts';
 import Auth from './components/Auth.tsx';
@@ -40,9 +40,13 @@ const App: React.FC = () => {
   useEffect(() => {
     if (state.isAuthenticated) {
       const { user, activeRoom, messages, isAuthenticated } = state;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        user, activeRoom, messages, isAuthenticated
-      }));
+      try {
+         localStorage.setItem(STORAGE_KEY, JSON.stringify({
+           user, activeRoom, messages, isAuthenticated
+         }));
+      } catch (e) {
+         console.warn("Storage quota exceeded, likely due to file attachments.");
+      }
     }
   }, [state.user, state.activeRoom, state.messages, state.isAuthenticated]);
 
@@ -149,7 +153,7 @@ const App: React.FC = () => {
     socket.emit('message', joinMsg);
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, attachment?: Attachment) => {
     if (!state.user) return;
 
     const msg: Message = {
@@ -160,12 +164,13 @@ const App: React.FC = () => {
       content,
       timestamp: Date.now(),
       type: 'text',
-      reactions: {}
+      reactions: {},
+      attachment
     };
 
     socket.emit('message', msg);
 
-    if (isBotEnabled) {
+    if (isBotEnabled && !attachment) {
       const response = await getGeminiResponse(content);
       if (response) {
         const botMsg: Message = {

@@ -1,29 +1,32 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Message, User } from '../types.ts';
+import { Message, User, Attachment } from '../types.ts';
 
 interface ChatWindowProps {
   messages: Message[];
   currentUser: User;
   activeRoom: string;
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string, attachment?: Attachment) => void;
   isBotEnabled: boolean;
   onToggleBot: () => void;
   onAddReaction: (messageId: string, emoji: string) => void;
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+const MAX_FILE_SIZE = 1 * 1024 * 1024; // 1MB limit for P2P stability
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ messages, currentUser, activeRoom, onSendMessage, isBotEnabled, onToggleBot, onAddReaction }) => {
   const [inputText, setInputText] = useState('');
   const [activeReactionId, setActiveReactionId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, messages[messages.length - 1]?.reactions]); // Auto scroll on new message or reaction
+  }, [messages.length, messages[messages.length - 1]?.reactions]); 
 
   // Close reaction picker on outside click
   useEffect(() => {
@@ -46,8 +49,76 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, currentUser, activeRo
     }
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_FILE_SIZE) {
+      alert(`File too large. Max size is 1MB for P2P stability.`);
+      e.target.value = ''; // Reset input
+      return;
+    }
+
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      const type = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'file';
+      
+      const attachment: Attachment = {
+        id: `att-${Date.now()}`,
+        name: file.name,
+        type,
+        mimeType: file.type,
+        data: base64,
+        size: file.size
+      };
+
+      // Auto-send the file
+      onSendMessage("", attachment);
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.onerror = () => {
+      console.error("File reading failed");
+      setUploading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const toggleReactionPicker = (msgId: string) => {
     setActiveReactionId(activeReactionId === msgId ? null : msgId);
+  };
+
+  const renderAttachment = (att: Attachment) => {
+    if (att.type === 'image') {
+      return (
+        <div className="mb-2 rounded-lg overflow-hidden border border-slate-200/20">
+          <img src={att.data} alt={att.name} className="max-w-full max-h-[300px] object-cover" />
+        </div>
+      );
+    } else if (att.type === 'video') {
+      return (
+        <div className="mb-2 rounded-lg overflow-hidden border border-slate-200/20">
+          <video controls src={att.data} className="max-w-full max-h-[300px]" />
+        </div>
+      );
+    } else {
+      return (
+        <div className="flex items-center gap-3 p-3 bg-white/10 rounded-lg mb-2 border border-white/20">
+           <div className="w-10 h-10 bg-indigo-500 rounded-lg flex items-center justify-center text-white">
+             <i className="fas fa-file-lines"></i>
+           </div>
+           <div className="flex-1 min-w-0">
+             <div className="text-xs font-bold truncate">{att.name}</div>
+             <div className="text-[10px] opacity-70">{(att.size / 1024).toFixed(1)} KB</div>
+           </div>
+           <a href={att.data} download={att.name} className="w-8 h-8 flex items-center justify-center bg-white/20 rounded-full hover:bg-white/30 transition-colors">
+             <i className="fas fa-download text-xs"></i>
+           </a>
+        </div>
+      );
+    }
   };
 
   return (
@@ -93,6 +164,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, currentUser, activeRo
           const isOwn = msg.senderId === currentUser.id;
           const reactions = (msg.reactions || {}) as Record<string, string[]>;
           const hasReactions = Object.keys(reactions).length > 0;
+          const hasAttachment = !!msg.attachment;
 
           return (
             <div key={msg.id} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} group relative animate-fade-in`}>
@@ -101,12 +173,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, currentUser, activeRo
                 <span className="text-[9px] text-slate-300">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
               
-              <div className="relative max-w-[80%]">
+              <div className="relative max-w-[80%] min-w-[200px]">
                 {/* Message Bubble */}
                 <div className={`px-4 py-2.5 rounded-2xl shadow-sm relative ${
                   isOwn ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-slate-700 border border-slate-200 rounded-tl-none'
                 }`}>
-                  <p className="text-sm">{msg.content}</p>
+                  {hasAttachment && renderAttachment(msg.attachment!)}
+                  {msg.content && <p className="text-sm">{msg.content}</p>}
                 </div>
 
                 {/* Reaction Picker Button */}
@@ -168,6 +241,21 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, currentUser, activeRo
 
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-4 bg-white border-t flex items-center gap-3 relative z-20">
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          className="hidden" 
+          onChange={handleFileSelect} 
+          accept="image/*,video/*,.pdf,.doc,.docx"
+        />
+        <button 
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="w-11 h-11 bg-slate-100 text-slate-500 rounded-xl flex items-center justify-center hover:bg-slate-200 hover:text-slate-700 transition-all"
+          title="Attach file (Max 1MB)"
+        >
+           {uploading ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-paperclip"></i>}
+        </button>
         <input 
           type="text"
           className="flex-1 bg-slate-100 border-none rounded-xl px-5 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"

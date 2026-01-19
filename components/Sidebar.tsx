@@ -15,24 +15,58 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ user, activeRoom, peer, isBotEnabled, setIsBotEnabled, sessionStats, connectionStatus, onLogout }) => {
   const [showAudit, setShowAudit] = useState(false);
 
-  // Determine status color
-  let statusColor = 'bg-slate-400';
-  let statusText = 'text-slate-500';
-  let pulse = false;
+  // Helper to determine status visuals
+  const getStatusConfig = (status: string) => {
+    switch (status) {
+      case 'host':
+        return {
+          bg: 'bg-emerald-500',
+          text: 'text-emerald-500',
+          indicatorColor: 'bg-emerald-500',
+          icon: 'fa-server',
+          pulse: true,
+          subLabel: 'Broadcasting on P2P Mesh'
+        };
+      case 'client':
+        return {
+          bg: 'bg-blue-500',
+          text: 'text-blue-500',
+          indicatorColor: 'bg-blue-500',
+          icon: 'fa-shield-halved',
+          pulse: true,
+          subLabel: 'E2E Encrypted Tunnel'
+        };
+      case 'connecting':
+        return {
+          bg: 'bg-amber-500',
+          text: 'text-amber-500',
+          indicatorColor: 'bg-amber-400',
+          icon: 'fa-circle-notch fa-spin',
+          pulse: true,
+          subLabel: 'Handshaking...'
+        };
+      case 'error':
+        return {
+          bg: 'bg-rose-500',
+          text: 'text-rose-500',
+          indicatorColor: 'bg-rose-500',
+          icon: 'fa-triangle-exclamation',
+          pulse: false,
+          subLabel: 'Retrying Connection...'
+        };
+      default: // disconnected or others
+        return {
+          bg: 'bg-slate-500',
+          text: 'text-slate-400',
+          indicatorColor: 'bg-slate-400',
+          icon: 'fa-plug-circle-xmark',
+          pulse: false,
+          subLabel: 'Offline'
+        };
+    }
+  };
 
-  if (connectionStatus?.status === 'host') {
-    statusColor = 'bg-emerald-500';
-    statusText = 'text-emerald-500';
-    pulse = true;
-  } else if (connectionStatus?.status === 'client') {
-    statusColor = 'bg-blue-500';
-    statusText = 'text-blue-500';
-    pulse = true;
-  } else if (connectionStatus?.status === 'connecting') {
-    statusColor = 'bg-amber-400';
-    statusText = 'text-amber-500';
-    pulse = true;
-  }
+  const statusConfig = getStatusConfig(connectionStatus?.status || 'disconnected');
 
   return (
     <div className="w-80 bg-white border-r border-slate-200 flex flex-col shadow-sm z-20 relative glass-sidebar">
@@ -47,23 +81,41 @@ const Sidebar: React.FC<SidebarProps> = ({ user, activeRoom, peer, isBotEnabled,
            </div>
         </div>
 
-        <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 shadow-xl shadow-slate-200">
-           <p className="text-[9px] text-slate-500 font-bold uppercase mb-2 tracking-widest">Network Status</p>
-           <div className="flex items-center justify-between">
-              <span className="font-mono text-xs font-bold text-slate-200">
-                 {connectionStatus?.label || 'Initializing...'}
-              </span>
-              <div className="flex items-center gap-1.5">
-                 <div className={`w-1.5 h-1.5 rounded-full ${statusColor} ${pulse ? 'animate-pulse' : ''} shadow-[0_0_8px_rgba(255,255,255,0.2)]`}></div>
-                 <span className={`text-[9px] font-bold ${statusText} tracking-tighter uppercase`}>
-                    {connectionStatus?.status === 'host' ? 'HOST' : connectionStatus?.status === 'client' ? 'SECURE' : 'WAIT'}
-                 </span>
+        {/* Enhanced Network Status Card */}
+        <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 shadow-xl shadow-slate-200 overflow-hidden relative group">
+           {/* Decorative sheen */}
+           <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-white/5 to-transparent rounded-bl-full pointer-events-none transition-opacity opacity-50 group-hover:opacity-100"></div>
+
+           <div className="flex items-center justify-between mb-3 relative z-10">
+             <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Network Status</p>
+             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/5">
+                <div className={`w-1.5 h-1.5 rounded-full ${statusConfig.indicatorColor} ${statusConfig.pulse ? 'animate-pulse' : ''} shadow-[0_0_8px_currentColor]`}></div>
+                <span className={`text-[9px] font-bold ${statusConfig.text} tracking-tighter uppercase`}>
+                   {connectionStatus?.status?.toUpperCase() || 'OFFLINE'}
+                </span>
+             </div>
+           </div>
+
+           <div className="flex items-center gap-3 relative z-10">
+              <div className={`w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center border border-slate-700 shadow-inner`}>
+                 <i className={`fas ${statusConfig.icon} ${statusConfig.text} text-sm`}></i>
+              </div>
+              <div className="flex-1 min-w-0">
+                 <div className="text-xs font-bold text-slate-200 truncate leading-tight mb-0.5">
+                    {connectionStatus?.label || 'Unknown State'}
+                 </div>
+                 <div className="text-[10px] text-slate-500 font-mono truncate">
+                    {statusConfig.subLabel}
+                 </div>
               </div>
            </div>
+           
            {activeRoom && (
-              <div className="mt-2 pt-2 border-t border-slate-800 flex justify-between items-center">
-                 <span className="text-[9px] text-slate-500 uppercase">Tunnel ID</span>
-                 <span className="text-[10px] font-mono text-indigo-400">#{activeRoom}</span>
+              <div className="mt-3 pt-2 border-t border-slate-800 flex justify-between items-center relative z-10">
+                 <span className="text-[9px] text-slate-500 uppercase flex items-center gap-1">
+                    Tunnel ID
+                 </span>
+                 <span className="text-[10px] font-mono text-indigo-400 group-hover:text-indigo-300 transition-colors">#{activeRoom}</span>
               </div>
            )}
         </div>
