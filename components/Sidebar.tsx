@@ -9,9 +9,10 @@ interface SidebarProps {
   setIsBotEnabled: (v: boolean) => void;
   sessionStats: any;
   connectionStatus?: { status: string; label: string };
+  onLogout: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ user, activeRoom, peer, isBotEnabled, setIsBotEnabled, sessionStats, connectionStatus }) => {
+const Sidebar: React.FC<SidebarProps> = ({ user, activeRoom, peer, isBotEnabled, setIsBotEnabled, sessionStats, connectionStatus, onLogout }) => {
   const [showAudit, setShowAudit] = useState(false);
 
   // Determine status color
@@ -158,7 +159,7 @@ const Sidebar: React.FC<SidebarProps> = ({ user, activeRoom, peer, isBotEnabled,
          <div className="flex items-center justify-between text-slate-400 text-sm">
             <button className="hover:text-indigo-600 transition-colors"><i className="fas fa-shield-heart"></i></button>
             <button className="hover:text-indigo-600 transition-colors"><i className="fas fa-key"></i></button>
-            <button className="hover:text-indigo-600 transition-colors"><i className="fas fa-power-off"></i></button>
+            <button onClick={onLogout} className="hover:text-indigo-600 transition-colors"><i className="fas fa-power-off"></i></button>
          </div>
       </div>
     </div>
@@ -166,4 +167,3 @@ const Sidebar: React.FC<SidebarProps> = ({ user, activeRoom, peer, isBotEnabled,
 };
 
 export default Sidebar;
-//

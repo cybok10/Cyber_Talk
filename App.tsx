@@ -1,27 +1,69 @@
 import React, { useState, useEffect } from 'react';
-import { User, Message, ChatState } from './types.ts';
+import { User, Message, ChatState, ReactionPayload } from './types.ts';
 import { socket } from './services/socketService.ts';
 import { getGeminiResponse } from './services/geminiService.ts';
 import Auth from './components/Auth.tsx';
 import ChatWindow from './components/ChatWindow.tsx';
 import Sidebar from './components/Sidebar.tsx';
 
+const STORAGE_KEY = 'ciphertalk_v2_storage';
+
 const App: React.FC = () => {
-  const [state, setState] = useState<ChatState>({
-    user: null,
-    activeRoom: 'Global',
-    messages: [],
-    isAuthenticated: false,
-    connectionStatus: { status: 'disconnected', label: 'Offline' }
+  // Initialize state from local storage if available
+  const [state, setState] = useState<ChatState>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // We restore the user and messages, but reset connection status
+        return {
+          ...parsed,
+          connectionStatus: { status: 'disconnected', label: 'Reconnecting...' }
+        };
+      }
+    } catch (e) {
+      console.warn("Failed to load session from storage:", e);
+    }
+    
+    return {
+      user: null,
+      activeRoom: 'Global',
+      messages: [],
+      isAuthenticated: false,
+      connectionStatus: { status: 'disconnected', label: 'Offline' }
+    };
   });
 
   const [isBotEnabled, setIsBotEnabled] = useState(false);
 
+  // 1. Persist state to local storage on change
+  useEffect(() => {
+    if (state.isAuthenticated) {
+      const { user, activeRoom, messages, isAuthenticated } = state;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        user, activeRoom, messages, isAuthenticated
+      }));
+    }
+  }, [state.user, state.activeRoom, state.messages, state.isAuthenticated]);
+
+  // 2. Attempt reconnection on mount if authenticated
+  useEffect(() => {
+    if (state.isAuthenticated && state.activeRoom) {
+      console.log(`[App] Restoring session for room: ${state.activeRoom}`);
+      socket.connect(state.activeRoom);
+    }
+  }, []); // Run once on mount
+
+  // 3. Handle Logout
+  const handleLogout = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    // Reload to clear memory and socket state completely
+    window.location.reload();
+  };
+
   useEffect(() => {
     // Message Listener
     const handleMessage = (msg: Message) => {
-      // Strict room check not needed as P2P channels are room-specific, 
-      // but good for safety if we switch back to global socket later.
       if (msg.roomId !== state.activeRoom) return;
 
       setState(prev => {
@@ -31,16 +73,44 @@ const App: React.FC = () => {
       });
     };
 
+    // Reaction Listener
+    const handleReactionEvent = (payload: ReactionPayload) => {
+      setState(prev => {
+        const updatedMessages = prev.messages.map(msg => {
+          if (msg.id !== payload.messageId) return msg;
+
+          const reactions = { ...(msg.reactions || {}) };
+          const users = reactions[payload.emoji] || [];
+          
+          if (users.includes(payload.userId)) {
+            // Remove reaction
+            reactions[payload.emoji] = users.filter(id => id !== payload.userId);
+            if (reactions[payload.emoji].length === 0) {
+              delete reactions[payload.emoji];
+            }
+          } else {
+            // Add reaction
+            reactions[payload.emoji] = [...users, payload.userId];
+          }
+
+          return { ...msg, reactions };
+        });
+        return { ...prev, messages: updatedMessages };
+      });
+    };
+
     // Status Listener
     const handleStatus = (status: any) => {
       setState(prev => ({ ...prev, connectionStatus: status }));
     };
 
     socket.on('message', handleMessage);
+    socket.on('reaction', handleReactionEvent);
     socket.on('status', handleStatus);
 
     return () => {
       socket.off('message', handleMessage);
+      socket.off('reaction', handleReactionEvent);
       socket.off('status', handleStatus);
     };
   }, [state.activeRoom]);
@@ -65,7 +135,7 @@ const App: React.FC = () => {
       connectionStatus: { status: 'connecting', label: 'Initializing...' }
     }));
 
-    // 3. Emit Join Message (Will be queued until P2P connects)
+    // 3. Emit Join Message
     const joinMsg: Message = {
       id: `sys-${Date.now()}`,
       roomId: roomId,
@@ -76,7 +146,6 @@ const App: React.FC = () => {
       type: 'system'
     };
     
-    // We emit immediately. socketService handles queuing.
     socket.emit('message', joinMsg);
   };
 
@@ -90,7 +159,8 @@ const App: React.FC = () => {
       senderName: state.user.username,
       content,
       timestamp: Date.now(),
-      type: 'text'
+      type: 'text',
+      reactions: {}
     };
 
     socket.emit('message', msg);
@@ -105,11 +175,24 @@ const App: React.FC = () => {
           senderName: 'CipherBot',
           content: response,
           timestamp: Date.now(),
-          type: 'text'
+          type: 'text',
+          reactions: {}
         };
         socket.emit('message', botMsg);
       }
     }
+  };
+
+  const handleAddReaction = (messageId: string, emoji: string) => {
+    if (!state.user) return;
+    
+    const payload: ReactionPayload = {
+      messageId,
+      emoji,
+      userId: state.user.id
+    };
+
+    socket.emit('reaction', payload);
   };
 
   if (!state.isAuthenticated) {
@@ -135,6 +218,7 @@ const App: React.FC = () => {
         setIsBotEnabled={setIsBotEnabled}
         sessionStats={{}}
         connectionStatus={state.connectionStatus}
+        onLogout={handleLogout}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <ChatWindow 
@@ -144,6 +228,7 @@ const App: React.FC = () => {
           onSendMessage={handleSendMessage}
           isBotEnabled={isBotEnabled}
           onToggleBot={() => setIsBotEnabled(!isBotEnabled)}
+          onAddReaction={handleAddReaction}
         />
       </div>
     </div>
@@ -151,4 +236,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-//

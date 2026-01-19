@@ -13,6 +13,13 @@ export interface Message {
   content: string;
   timestamp: number;
   type: 'text' | 'system';
+  reactions?: { [emoji: string]: string[] }; // emoji -> array of userIds
+}
+
+export interface ReactionPayload {
+  messageId: string;
+  emoji: string;
+  userId: string;
 }
 
 export interface ChatState {
@@ -25,4 +32,3 @@ export interface ChatState {
     label: string;
   };
 }
-//
