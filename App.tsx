@@ -5,6 +5,7 @@ import { getGeminiResponse } from './services/geminiService.ts';
 import Auth from './components/Auth.tsx';
 import ChatWindow from './components/ChatWindow.tsx';
 import Sidebar from './components/Sidebar.tsx';
+import NetworkVisualizer from './components/NetworkVisualizer.tsx';
 
 const STORAGE_KEY = 'ciphertalk_v2_storage';
 
@@ -35,6 +36,7 @@ const App: React.FC = () => {
   });
 
   const [isBotEnabled, setIsBotEnabled] = useState(false);
+  const [networkActivity, setNetworkActivity] = useState<'idle' | 'sending' | 'receiving'>('idle');
   const typingTimeouts = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
 
   useEffect(() => {
@@ -64,6 +66,11 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleMessage = (msg: Message) => {
       if (msg.roomId !== state.activeRoom) return;
+
+      if (msg.senderId !== state.user?.id) {
+         setNetworkActivity('receiving');
+         setTimeout(() => setNetworkActivity('idle'), 1000);
+      }
 
       setState(prev => {
         const newTyping = prev.typingUsers.filter(u => u !== msg.senderName);
@@ -167,6 +174,11 @@ const App: React.FC = () => {
 
   const handleSendMessage = async (content: string, attachment?: Attachment) => {
     if (!state.user) return;
+    
+    // Trigger Network Animation
+    setNetworkActivity('sending');
+    setTimeout(() => setNetworkActivity('idle'), 2000);
+
     const msg: Message = {
       id: `m-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       roomId: state.activeRoom,
@@ -237,7 +249,7 @@ const App: React.FC = () => {
         connectionStatus={state.connectionStatus}
         onLogout={handleLogout}
       />
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 z-0">
         <ChatWindow 
           messages={state.messages}
           currentUser={state.user!}
@@ -252,6 +264,7 @@ const App: React.FC = () => {
           onDeleteMessages={handleDeleteMessages}
         />
       </div>
+      <NetworkVisualizer activity={networkActivity} />
     </div>
   );
 };

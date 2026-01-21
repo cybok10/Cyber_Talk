@@ -28,25 +28,27 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const [activeReactionId, setActiveReactionId] = useState<string | null>(null);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Auto-scroll
+  // Auto-scroll logic: Only auto-scroll if we are at the bottom or if it's a new message, 
+  // but disable if searching to avoid jumping around.
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && !searchQuery) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, messages[messages.length - 1]?.reactions, typingUsers.length]); 
+  }, [messages.length, messages[messages.length - 1]?.reactions, typingUsers.length, searchQuery]); 
 
   // Outside click to clear state
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
         setActiveReactionId(null);
-        // We only clear selection if clicking outside the main message area to avoid accidental clears
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -151,6 +153,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     setInputText(prev => prev + (prev ? '\n' : '') + content);
     setSelectedMessageIds(new Set());
   };
+  
+  const handleReply = (msg: Message, e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Quote format
+    const quote = `> ${msg.senderName}: ${msg.content}\n\n`;
+    setInputText(prev => prev + quote);
+  };
 
   const renderAttachment = (att: Attachment) => {
     if (att.type === 'image') {
@@ -184,11 +193,19 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   };
 
   const isSelectionMode = selectedMessageIds.size > 0;
+  
+  // Filter messages for search
+  const displayMessages = searchQuery 
+    ? messages.filter(m => 
+        m.content.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        m.senderName.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : messages;
 
   return (
     <div className="flex flex-col h-full max-w-4xl mx-auto w-full bg-white shadow-xl relative" ref={wrapperRef}>
-      {/* Enhanced Header with Selection Mode */}
-      <header className={`px-6 py-4 border-b flex items-center justify-between transition-colors z-20
+      {/* Enhanced Header with Selection & Search Mode */}
+      <header className={`px-6 py-4 border-b flex items-center justify-between transition-colors z-20 min-h-[80px]
          ${isSelectionMode ? 'bg-indigo-600 text-white' : 'bg-white'}`}>
         
         {isSelectionMode ? (
@@ -210,6 +227,23 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 <i className="fas fa-trash"></i>
               </button>
             </div>
+          </div>
+        ) : isSearchOpen ? (
+          <div className="flex items-center w-full gap-3 animate-fade-in">
+             <div className="relative flex-1">
+                <i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                <input 
+                  autoFocus
+                  type="text" 
+                  className="w-full bg-slate-100 border-none rounded-xl pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="Search messages..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+             </div>
+             <button onClick={() => { setIsSearchOpen(false); setSearchQuery(''); }} className="p-2 text-slate-400 hover:text-slate-600 rounded-lg bg-slate-50 hover:bg-slate-100">
+               <span className="text-xs font-bold">Cancel</span>
+             </button>
           </div>
         ) : (
           <>
@@ -237,15 +271,26 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 </div>
               </div>
             </div>
-            <button 
-              onClick={onToggleBot}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-                isBotEnabled ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-400'
-              }`}
-            >
-              <i className="fas fa-robot"></i>
-              {isBotEnabled ? 'Bot On' : 'Bot Off'}
-            </button>
+            
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setIsSearchOpen(true)}
+                className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                title="Search Messages"
+              >
+                <i className="fas fa-search"></i>
+              </button>
+
+              <button 
+                onClick={onToggleBot}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
+                  isBotEnabled ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-400'
+                }`}
+              >
+                <i className="fas fa-robot"></i>
+                {isBotEnabled ? 'On' : 'Off'}
+              </button>
+            </div>
           </>
         )}
       </header>
@@ -255,7 +300,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-6 space-y-1 custom-scrollbar bg-slate-50/50"
       >
-        {messages.map((msg, index) => {
+        {displayMessages.length === 0 && searchQuery && (
+           <div className="flex flex-col items-center justify-center h-full text-slate-400">
+              <i className="fas fa-search text-3xl mb-3 opacity-20"></i>
+              <p className="text-sm font-medium">No messages found</p>
+           </div>
+        )}
+
+        {displayMessages.map((msg, index) => {
           if (msg.type === 'system') {
             return (
               <div key={msg.id} className="text-center my-6">
@@ -266,10 +318,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
             );
           }
 
-          // Grouping Logic
+          // Grouping Logic (Caution: filtering breaks sequence logic visually, but that's acceptable for search results)
           const isOwn = msg.senderId === currentUser.id;
-          const previousMsg = messages[index - 1];
-          const nextMsg = messages[index + 1];
+          const previousMsg = displayMessages[index - 1];
+          const nextMsg = displayMessages[index + 1];
           const isSequence = previousMsg && previousMsg.senderId === msg.senderId && previousMsg.type !== 'system' && (msg.timestamp - previousMsg.timestamp < 300000); 
           const showDateSeparator = !previousMsg || !isSameDay(msg.timestamp, previousMsg.timestamp);
 
@@ -280,7 +332,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
           return (
             <React.Fragment key={msg.id}>
-              {showDateSeparator && (
+              {showDateSeparator && !searchQuery && (
                 <div className="flex items-center justify-center my-6">
                   <div className="bg-slate-200 h-px w-8"></div>
                   <span className="mx-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">{formatDate(msg.timestamp)}</span>
@@ -289,8 +341,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
               )}
 
               <div 
-                className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} group relative animate-fade-in ${isSequence ? 'mt-1' : 'mt-4'}
-                  ${isSelected ? 'opacity-100' : ''}`}
+                className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} group relative animate-fade-in 
+                  ${isSequence ? 'mt-1' : 'mt-4'}
+                  ${isSelected ? 'bg-indigo-50/40 -mx-6 px-6 py-2' : ''} transition-colors duration-200`}
                 onClick={() => toggleMessageSelection(msg.id)}
               >
                 {/* Sender Name */}
@@ -298,7 +351,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                   <span className="text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">{msg.senderName}</span>
                 )}
                 
-                <div className={`relative max-w-[80%] min-w-[120px] transition-transform duration-200 ${isSelected ? 'scale-[1.02]' : ''}`}>
+                <div className={`relative max-w-[80%] min-w-[120px] transition-transform duration-200 ${isSelected ? 'scale-[1.01]' : ''}`}>
                   
                   {/* Selection Indicator */}
                   {isSelected && (
@@ -334,17 +387,32 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                     </div>
                   </div>
 
-                  {/* Reaction Picker Button (Only show if not selected and not deleted) */}
+                  {/* Hover Actions (Reply & Reaction) - Only show if not selected/deleted */}
                   {!isSelected && !msg.isDeleted && (
-                    <button 
-                      onClick={(e) => toggleReactionPicker(msg.id, e)}
-                      className={`absolute top-1/2 -translate-y-1/2 ${isOwn ? '-left-8' : '-right-8'} 
-                        w-6 h-6 rounded-full bg-slate-100 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 
-                        flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 z-10
-                        ${activeReactionId === msg.id ? 'opacity-100 text-indigo-600 bg-indigo-50' : ''}`}
-                    >
-                      <i className="fas fa-smile text-xs"></i>
-                    </button>
+                    <div className={`absolute top-1/2 -translate-y-1/2 ${isOwn ? '-left-16' : '-right-16'} 
+                      flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all z-10`}>
+                      
+                      {/* Reply Button */}
+                      <button 
+                        onClick={(e) => handleReply(msg, e)}
+                        className="w-6 h-6 rounded-full bg-slate-100 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 
+                        flex items-center justify-center shadow-sm"
+                        title="Quote/Reply"
+                      >
+                        <i className="fas fa-reply text-[10px]"></i>
+                      </button>
+
+                      {/* Reaction Button */}
+                      <button 
+                        onClick={(e) => toggleReactionPicker(msg.id, e)}
+                        className={`w-6 h-6 rounded-full bg-slate-100 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 
+                        flex items-center justify-center shadow-sm
+                        ${activeReactionId === msg.id ? 'text-indigo-600 bg-indigo-50' : ''}`}
+                        title="Add Reaction"
+                      >
+                        <i className="fas fa-smile text-[10px]"></i>
+                      </button>
+                    </div>
                   )}
 
                   {/* Reaction Picker Popover */}
@@ -395,7 +463,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
         })}
         
         {/* Advanced Typing Indicator */}
-        {typingUsers.length > 0 && (
+        {typingUsers.length > 0 && !searchQuery && (
            <div className="flex items-center gap-3 mt-4 animate-fade-in pl-2">
               <div className="bg-slate-200 rounded-full px-3 py-2 flex gap-1 items-center h-8">
                  <div className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-[bounce_1s_infinite_0ms]"></div>
